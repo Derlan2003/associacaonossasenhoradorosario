@@ -1,0 +1,68 @@
+name: Gerar previas de compartilhamento das noticias
+
+on:
+  schedule:
+    - cron: "*/15 * * * *"
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+concurrency:
+  group: compartilhar
+  cancel-in-progress: false
+
+jobs:
+  gerar:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Gerar paginas /n/<id>/
+        run: |
+          cat > /tmp/gerar.mjs <<'EOF'
+          import fs from 'node:fs';
+          const SB = 'https://dshitidzchyroeuazouk.supabase.co';
+          const KEY = 'sb_publishable_Sv7RCGNVS_1Ck-D3ZpMgLQ_dKiV_oqB';
+          const SITE = 'https://abnsrosariobarretos.org.br';
+          const PADRAO = SITE + '/compartilhar.png';
+          const r = await fetch(SB + '/rest/v1/noticias?select=*&publicado=eq.true', { headers: { apikey: KEY } });
+          if (!r.ok) { console.error('Erro Supabase', r.status, await r.text()); process.exit(1); }
+          const lista = await r.json();
+          const esc = s => String(s ?? '').replace(/&/g, '&amp;').replace(/"/g, '&quot;').replace(/</g, '&lt;').replace(/>/g, '&gt;');
+          fs.rmSync('n', { recursive: true, force: true });
+          for (const n of lista) {
+            const id = String(n.id);
+            const titulo = n.titulo || 'Notícia';
+            const desc = String(n.resumo || n.texto || '').replace(/\s+/g, ' ').trim().slice(0, 180);
+            const img = n.foto || PADRAO;
+            const url = SITE + '/n/' + encodeURIComponent(id) + '/';
+            const destino = '/?pagina=noticias&n=' + encodeURIComponent(id);
+            const html = `<!DOCTYPE html>
+          <html lang="pt-BR"><head><meta charset="utf-8">
+          <title>${esc(titulo)} — Associação Nossa Senhora do Rosário</title>
+          <meta name="description" content="${esc(desc)}">
+          <meta property="og:type" content="article">
+          <meta property="og:site_name" content="Associação Beneficente Nossa Senhora do Rosário">
+          <meta property="og:title" content="${esc(titulo)}">
+          <meta property="og:description" content="${esc(desc)}">
+          <meta property="og:url" content="${esc(url)}">
+          <meta property="og:image" content="${esc(img)}">
+          <meta name="twitter:card" content="summary_large_image">
+          <link rel="canonical" href="${esc(url)}">
+          <script>location.replace(${JSON.stringify(destino)});</script>
+          <meta http-equiv="refresh" content="0; url=${esc(destino)}">
+          </head><body><a href="${esc(destino)}">${esc(titulo)}</a></body></html>`;
+            fs.mkdirSync('n/' + id, { recursive: true });
+            fs.writeFileSync('n/' + id + '/index.html', html);
+          }
+          console.log('Paginas geradas:', lista.length);
+          EOF
+          node /tmp/gerar.mjs
+
+      - name: Salvar no repositorio
+        run: |
+          git config user.name "github-actions"
+          git config user.email "github-actions@users.noreply.github.com"
+          git add -A n
+          if git diff --cached --quiet; then echo "Nada mudou"; else git commit -m "Atualiza previas das noticias" && git push; fi
